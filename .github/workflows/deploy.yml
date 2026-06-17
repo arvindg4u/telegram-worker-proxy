@@ -1,49 +1,25 @@
-name: Rotate Proxy Worker
+name: Deploy Proxy Worker
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
-  schedule:
-    - cron: '*/30 * * * *'
 
 jobs:
-  rotate:
+  deploy:
     runs-on: ubuntu-latest
-    name: Rotate Worker
+    name: Deploy
     steps:
       - uses: actions/checkout@v4
-
-      - name: Generate unique name & inject version
-        id: version
-        run: |
-          TS=$(date +%s)
-          DEPLOY_TIME=$(date -u -d "@${TS}" "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -r "${TS}" "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "unknown")
-          NAME="proxy-${TS}"
-          echo "name=${NAME}" >> "${GITHUB_OUTPUT}"
-          echo "timestamp=${TS}" >> "${GITHUB_OUTPUT}"
-          sed -i "s/__VERSION__/${NAME}/g" worker.js
-          sed -i "s|__DEPLOY_TIME__|${DEPLOY_TIME}|g" worker.js
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: Deploy worker with unique name
+      - name: Deploy worker
         run: |
           npm install wrangler -g > /dev/null 2>&1
-          npx wrangler deploy --name "${{ steps.version.outputs.name }}" --compatibility-date 2026-06-17 worker.js
+          npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-
-      - name: Install Python deps
-        run: pip install huggingface_hub requests -q
-
-      - name: Enable subdomain, update HF Space, cleanup
-        run: python3 scripts/rotate-worker.py
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          SPACE_NAME: arvindkumar888/HuggingClaw
-          WORKER_NAME: ${{ steps.version.outputs.name }}
