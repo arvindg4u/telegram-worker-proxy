@@ -1,0 +1,5 @@
+name = "telegram-worker-proxy"
+main = "worker.js"
+compatibility_date = "2026-06-01"
+
+# No routes needed — the Worker catches all requests
