@@ -1,5 +1,4 @@
-name = "telegram-worker-proxy"
+# wrangler.toml — base config; --name flag overrides for rotation
 main = "worker.js"
-compatibility_date = "2026-06-01"
-
-# No routes needed — the Worker catches all requests
+compatibility_date = "2026-06-17"
+workers_dev = true

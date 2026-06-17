@@ -1,12 +1,11 @@
 /**
- * Telegram & WhatsApp API Proxy for HuggingClaw
+ * Rotating Proxy Worker for HuggingClaw — bypasses HF Spaces outbound blocks
  * 
- * Deploy this Worker on Cloudflare and point your HuggingClaw Space's
- * CLOUDFLARE_PROXY_URL to it. This bypasses HuggingFace Spaces'
- * DNS-level blocking of api.telegram.org and WhatsApp domains.
+ * Deployed automatically every 30 min by GitHub Actions cron.
+ * Each deploy gets a unique worker name → fresh egress IP → bypasses rate limits.
  * 
- * Deploy: Connect this repo to Cloudflare Workers via the dashboard,
- * or copy-paste worker.js into a new Worker.
+ * VERSION: __VERSION__
+ * DEPLOYED: __DEPLOY_TIME__
  */
 
 addEventListener("fetch", (event) => {
@@ -28,6 +27,10 @@ async function handleRequest(request) {
     redirect: "follow"
   });
   
+  // Add debug headers so we can identify which proxy version handled the request
+  newReq.headers.set("x-proxy-version", "__VERSION__");
+  newReq.headers.set("x-proxy-deployed", "__DEPLOY_TIME__");
+  
   // Remove proxy-specific headers before forwarding
   newReq.headers.delete("x-target-host");
   newReq.headers.delete("x-proxy-key");
@@ -36,7 +39,7 @@ async function handleRequest(request) {
     const response = await fetch(newReq);
     return response;
   } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify({ error: error.message, version: "__VERSION__" }), {
       status: 502,
       headers: { "content-type": "application/json" }
     });

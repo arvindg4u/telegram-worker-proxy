@@ -1,17 +1,139 @@
-name: Deploy Worker
+name: Rotate Proxy Worker
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    # Every 30 minutes — rotate to bypass opencode.ai IP rate limits
+    - cron: '*/30 * * * *'
 
 jobs:
-  deploy:
+  rotate:
     runs-on: ubuntu-latest
-    name: Deploy
+    name: Rotate Worker
     steps:
       - uses: actions/checkout@v4
-      - name: Deploy
-        uses: cloudflare/wrangler-action@v3
+
+      - name: Generate unique name & inject version
+        id: version
+        run: |
+          TS=$(date +%s)
+          # Try GNU date first, then BSD
+          DEPLOY_TIME=$(date -u -d "@${TS}" "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -r "${TS}" "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "unknown")
+          NAME="proxy-${TS}"
+          echo "name=${NAME}" >> "${GITHUB_OUTPUT}"
+          echo "timestamp=${TS}" >> "${GITHUB_OUTPUT}"
+          
+          # Inject version placeholders into worker.js (single-quoted outside to prevent bash expansion)
+          sed -i "s/__VERSION__/${NAME}/g" worker.js
+          sed -i "s|__DEPLOY_TIME__|${DEPLOY_TIME}|g" worker.js
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          node-version: 22
+
+      - name: Deploy worker with unique name
+        run: |
+          npm install wrangler -g
+          npx wrangler deploy --name "${{ steps.version.outputs.name }}" --compatibility-date 2026-06-17 worker.js
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Enable subdomain, update HF Space, cleanup old workers
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          SPACE_NAME: arvindkumar888/HuggingClaw
+          WORKER_NAME: ${{ steps.version.outputs.name }}
+        run: |
+          pip install huggingface_hub requests -q
+          python3 << 'PYEOF'
+import os, json, requests, sys
+
+cf_token = os.environ.get('CLOUDFLARE_API_TOKEN', '')
+hf_token = os.environ.get('HF_TOKEN', '')
+space_name = os.environ.get('SPACE_NAME', 'arvindkumar888/HuggingClaw')
+worker_name = os.environ.get('WORKER_NAME', '')
+
+if not cf_token:
+    print("ERROR: CLOUDFLARE_API_TOKEN not set", file=sys.stderr); sys.exit(1)
+if not hf_token:
+    print("ERROR: HF_TOKEN not set", file=sys.stderr); sys.exit(1)
+if not worker_name:
+    print("ERROR: WORKER_NAME not set", file=sys.stderr); sys.exit(1)
+
+headers = {'Authorization': f'Bearer {cf_token}', 'Content-Type': 'application/json'}
+
+# 1. Get Cloudflare account ID
+print("→ Fetching Cloudflare account...")
+r = requests.get('https://api.cloudflare.com/client/v4/accounts', headers=headers)
+r.raise_for_status()
+accounts = r.json().get('result', [])
+if not accounts:
+    print("ERROR: No Cloudflare account found", file=sys.stderr); sys.exit(1)
+account_id = accounts[0]['id']
+print(f"  Account: {account_id}")
+
+# 2. Get workers subdomain
+print("→ Fetching subdomain...")
+r = requests.get(
+    f'https://api.cloudflare.com/client/v4/accounts/{account_id}/workers/subdomain',
+    headers=headers)
+r.raise_for_status()
+subdomain = r.json().get('result', {}).get('subdomain', '')
+if not subdomain:
+    print("ERROR: Workers subdomain not configured", file=sys.stderr); sys.exit(1)
+print(f"  Subdomain: {subdomain}")
+
+# 3. Enable workers.dev for this new script
+print(f"→ Enabling workers.dev for script: {worker_name}...")
+r = requests.post(
+    f'https://api.cloudflare.com/client/v4/accounts/{account_id}/workers/scripts/{worker_name}/subdomain',
+    headers=headers,
+    json={"enabled": True, "previews_enabled": True})
+print(f"  Response: {r.status_code}")
+if not r.json().get('success', False) and r.status_code != 409:
+    print(f"  Warning: {r.json().get('errors', 'unknown')}")
+
+worker_url = f"https://{worker_name}.{subdomain}.workers.dev"
+print(f"  New Worker URL: {worker_url}")
+
+# 4. Update HF Space secret
+print("→ Updating HF Space secret CLOUDFLARE_PROXY_URL...")
+from huggingface_hub import HfApi
+api = HfApi()
+api.add_space_secret(space_name, 'CLOUDFLARE_PROXY_URL', worker_url, token=hf_token)
+print("  Secret updated")
+
+# 5. Restart HF Space to pick up new proxy URL
+print("→ Restarting HF Space...")
+api.restart_space(space_name, token=hf_token)
+print("  Restart initiated — takes ~60-90s")
+
+# 6. Cleanup old proxy workers (keep last 3)
+print("→ Cleaning up old proxy workers...")
+r = requests.get(
+    f'https://api.cloudflare.com/client/v4/accounts/{account_id}/workers/scripts',
+    headers=headers)
+r.raise_for_status()
+all_workers = r.json().get('result', [])
+proxy_workers = sorted(
+    [w for w in all_workers if w['id'].startswith('proxy-')],
+    key=lambda w: w['id'], reverse=True)
+for stale in proxy_workers[3:]:
+    wid = stale['id']
+    print(f"  Deleting stale worker: {wid}...")
+    try:
+        requests.delete(
+            f'https://api.cloudflare.com/client/v4/accounts/{account_id}/workers/scripts/{wid}',
+            headers=headers)
+        print(f"  Deleted {wid}")
+    except Exception as e:
+        print(f"  Failed to delete {wid}: {e}")
+
+print(f"\n✓ Rotation complete!")
+print(f"  Active workers: {len(proxy_workers[:3])}")
+print(f"  New URL: {worker_url}")
+          PYEOF
