@@ -37,9 +37,11 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
+      - name: Install Python deps
+        run: pip install huggingface_hub requests -q
+
       - name: Enable subdomain, update HF Space, cleanup
-        run: |
-          python3 scripts/rotate-worker.py
+        run: python3 scripts/rotate-worker.py
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
