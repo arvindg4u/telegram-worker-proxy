@@ -1,43 +1,35 @@
 # Telegram Worker Proxy
 
-A Cloudflare Worker that proxies Telegram & WhatsApp API requests from HuggingFace Spaces.
+Cloudflare Worker for [HuggingClaw](https://github.com/arvindg4u/HuggingClaw) that proxies Telegram API requests to bypass HF Spaces outbound DNS blocks.
 
-HF Spaces blocks DNS for `api.telegram.org` — this Worker lets you route traffic through Cloudflare instead.
+## Deploy
 
-## Deploy (2 ways)
+### Option 1: Cloudflare Dashboard
 
-### 👉 Easiest: Copy-paste in browser
+1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com/) → **Workers & Pages** → **Create** → **Worker**
+2. Name it (e.g. `telegram-proxy`)
+3. Replace the default code with [`worker.js`](./worker.js)
+4. **Deploy**
+5. URL: `https://telegram-proxy.your-subdomain.workers.dev`
 
-1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com/) → **Workers & Pages** → **Create application** → **Worker**
-2. Give it a name (e.g. `telegram-proxy`)
-3. Delete the default code and paste the contents of [`worker.js`](./worker.js)
-4. Click **Deploy**
-5. Copy your Worker URL: `https://telegram-proxy.your-subdomain.workers.dev`
+### Option 2: GitHub Actions (auto-deploy)
 
-### ⚡ Advanced: GitHub Actions (auto-deploy on push)
-
-1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com/) → **My Profile** → **API Tokens** → **Create Token** → **Edit Cloudflare Workers** template
-2. Copy the token
-3. Go to this repo's **Settings** → **Secrets and variables** → **Actions** → **Add secret**
-4. Name: `CLOUDFLARE_API_TOKEN`, value: the token
-5. Push to `main` — the action auto-deploys
-
-## Configure HuggingClaw
-
-After deploying, set these secrets in your HF Space:
-
-```bash
-hf spaces secrets add arvindkumar888/HuggingClaw \
-  --secrets CLOUDFLARE_PROXY_URL=https://telegram-proxy.your-subdomain.workers.dev \
-  --secrets CLOUDFLARE_PROXY_SECRET=anything
-
-hf spaces restart arvindkumar888/HuggingClaw
-```
+1. Create a [Cloudflare API token](https://dash.cloudflare.com/profile/api-tokens) with **Workers** → **Edit** permission
+2. Add as `CLOUDFLARE_API_TOKEN` secret in repo Settings → Secrets → Actions
+3. Push to `main` — auto-deploys via GitHub Actions
 
 ## Test
 
 ```bash
-curl https://telegram-proxy.your-subdomain.workers.dev/bot<YOUR_TOKEN>/getMe
+curl https://telegram-proxy.your-subdomain.workers.dev/health
+
+# Proxy Telegram getMe
+curl https://telegram-proxy.your-subdomain.workers.dev/telegram/bot<YOUR_TOKEN>/getMe
 ```
 
-Should return your bot info.
+## Usage in HuggingClaw
+
+Set in HF Space secrets:
+```
+CLOUDFLARE_PROXY_URL=https://telegram-proxy.your-subdomain.workers.dev
+```
