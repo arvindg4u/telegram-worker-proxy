@@ -2,7 +2,7 @@
  * Rotating Proxy Worker for HuggingClaw — bypasses HF Spaces outbound blocks
  * 
  * Supported modes:
- *   1. /telegram/* — proxies to api.telegram.org (used by cloudflare-proxy.js)
+ *   1. /telegram/* — proxies to api.telegram.org
  *   2. x-target-host header — proxies to any target domain
  *   3. /health — health check endpoint
  * 
@@ -11,6 +11,7 @@
  */
 
 const TELEGRAM_API = "api.telegram.org";
+const UPSTREAM_TIMEOUT = 28000; // 28s — safe under Worker's 30s limit
 
 async function handleRequest(request) {
   const url = new URL(request.url);
@@ -38,11 +39,9 @@ async function handleRequest(request) {
   let targetUrl;
 
   if (path.startsWith("/telegram/")) {
-    // Mode 1: /telegram/bot<TOKEN>/<method> → api.telegram.org
     const tgPath = path.replace("/telegram", "");
     targetUrl = `https://${TELEGRAM_API}${tgPath}${url.search}`;
   } else if (targetHost) {
-    // Mode 2: x-target-host header (legacy)
     url.hostname = targetHost;
     targetUrl = url.toString();
   } else {
@@ -61,8 +60,7 @@ async function handleRequest(request) {
   headers.delete("x-target-host");
   headers.delete("x-proxy-key");
 
-  // Preserve original Host for Telegram's validation
-  if (targetHost === TELEGRAM_API || path.startsWith("/telegram/")) {
+  if (path.startsWith("/telegram/")) {
     headers.set("Host", TELEGRAM_API);
   }
 
@@ -73,9 +71,9 @@ async function handleRequest(request) {
     redirect: "follow",
   });
 
-  // ── Forward with timeout ──
+  // ── Forward with timeout (graceful for long-poll getUpdates) ──
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25000);
+  const timeout = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT);
 
   try {
     const response = await fetch(newReq, { signal: controller.signal });
@@ -83,6 +81,17 @@ async function handleRequest(request) {
     return response;
   } catch (error) {
     clearTimeout(timeout);
+    // For getUpdates timeout, return empty result (Telegram API valid response)
+    if (path.includes("/getUpdates")) {
+      return new Response(JSON.stringify({ ok: true, result: [] }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          "x-proxy-version": "__VERSION__",
+          "x-proxy-deployed": "__DEPLOY_TIME__",
+        },
+      });
+    }
     return new Response(JSON.stringify({ 
       error: error.message, 
       version: "__VERSION__",
