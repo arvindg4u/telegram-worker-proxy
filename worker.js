@@ -3,8 +3,9 @@
  * 
  * Supported modes:
  *   1. /telegram/* — proxies to api.telegram.org
- *   2. x-target-host header — proxies to any target domain
- *   3. /health — health check endpoint
+ *   2. /opencode/* — proxies to opencode.ai/zen
+ *   3. x-target-host header — proxies to any target domain
+ *   4. /health — health check endpoint
  * 
  * VERSION: __VERSION__
  * DEPLOYED: __DEPLOY_TIME__
@@ -41,12 +42,15 @@ async function handleRequest(request) {
   if (path.startsWith("/telegram/")) {
     const tgPath = path.replace("/telegram", "");
     targetUrl = `https://${TELEGRAM_API}${tgPath}${url.search}`;
+  } else if (path.startsWith("/opencode/")) {
+    const ocPath = path.replace("/opencode", "");
+    targetUrl = `https://opencode.ai${ocPath}${url.search}`;
   } else if (targetHost) {
     url.hostname = targetHost;
     targetUrl = url.toString();
   } else {
     return new Response(JSON.stringify({ 
-      error: "Use /telegram/* path or set x-target-host header",
+      error: "Use /telegram/*, /opencode/*, or set x-target-host header",
     }), {
       status: 400,
       headers: { "content-type": "application/json" },
@@ -62,6 +66,8 @@ async function handleRequest(request) {
 
   if (path.startsWith("/telegram/")) {
     headers.set("Host", TELEGRAM_API);
+  } else if (path.startsWith("/opencode/")) {
+    headers.set("Host", "opencode.ai");
   }
 
   const newReq = new Request(targetUrl, {
